@@ -1,0 +1,60 @@
+name: Build iOS IPA
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build DiscordTokenHelper IPA
+    runs-on: macos-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install xcodegen
+        run: brew install xcodegen
+
+      - name: Generate Xcode Project
+        run: xcodegen generate
+
+      - name: Build Archive
+        run: |
+          xcodebuild \
+            -project DiscordTokenHelper.xcodeproj \
+            -scheme DiscordTokenHelper \
+            -configuration Release \
+            -destination "generic/platform=iOS" \
+            -archivePath build/DiscordTokenHelper.xcarchive \
+            archive \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO
+
+      - name: Package IPA
+        run: |
+          mkdir -p Payload
+          cp -r build/DiscordTokenHelper.xcarchive/Products/Applications/DiscordTokenHelper.app Payload/
+          zip -r DiscordTokenHelper.ipa Payload
+          ls -lh DiscordTokenHelper.ipa
+
+      - name: Upload IPA Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: DiscordTokenHelper-IPA
+          path: DiscordTokenHelper.ipa
+
+      - name: Create Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release delete v1.0.0 --yes || true
+          git tag -d v1.0.0 || true
+          gh release create v1.0.0 \
+            DiscordTokenHelper.ipa \
+            --title "Discord Token Helper v1.0.0" \
+            --notes "iOS приложение для быстрого входа в Discord и удобного копирования токена в буфер обмена."

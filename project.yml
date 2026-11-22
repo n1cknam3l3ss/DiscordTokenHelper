@@ -1,0 +1,20 @@
+name: DiscordTokenHelper
+options:
+  bundleIdPrefix: com.n1cknam3l3ss
+  deploymentTarget:
+    iOS: "15.0"
+targets:
+  DiscordTokenHelper:
+    type: application
+    platform: iOS
+    deploymentTarget: "15.0"
+    sources:
+      - path: Sources
+    info:
+      path: Sources/Info.plist
+    settings:
+      PRODUCT_BUNDLE_IDENTIFIER: com.n1cknam3l3ss.DiscordTokenHelper
+      CODE_SIGNING_ALLOWED: NO
+      CODE_SIGN_IDENTITY: ""
+      DEVELOPMENT_TEAM: ""
+      ENABLE_BITCODE: NO
