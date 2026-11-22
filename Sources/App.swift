@@ -181,6 +181,10 @@ struct WKWebViewWrapper: UIViewRepresentable {
         contentController.add(self.coordinator, name: "tokenHandler")
     }
     
+    func makeCoordinator() -> Coordinator {
+        return coordinator
+    }
+    
     func makeUIView(context: Context) -> WKWebView {
         coordinator.tokenManager = context.environment[TokenManagerKey.self]
         webView.navigationDelegate = coordinator
@@ -279,7 +283,8 @@ struct WKWebViewWrapper: UIViewRepresentable {
                         return null;
                     })();
                     """
-                    self.webView?.evaluateJavaScript(js) { [weak self] result, _ in
+                    guard let wv = self?.webView else { return }
+                    wv.evaluateJavaScript(js) { [weak self] result, _ in
                         if let token = result as? String, !token.isEmpty {
                             self?.tokenManager?.setToken(token)
                         }
