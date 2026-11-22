@@ -14,18 +14,22 @@ class TokenManager: ObservableObject {
     @Published var token: String? = nil
     @Published var source: String = ""
     @Published var showCopiedBanner: Bool = false
-    @Published var statusText: String = "Войдите в свой аккаунт Discord"
     @Published var debugLogs: [String] = []
-    @Published var lastCheckResult: String? = nil
     @Published var showAlert: Bool = false
     @Published var alertTitle: String = ""
     @Published var alertMessage: String = ""
     
+    var onManualExtract: (() -> Void)?
+    var onReload: (() -> Void)?
+    
     func log(_ msg: String) {
         DispatchQueue.main.async {
-            let timestamp = DateFormatter.localizedString(from: Date(), dateStyle: .none, timeStyle: .medium)
-            self.debugLogs.append("[\(timestamp)] \(msg)")
-            if self.debugLogs.count > 50 {
+            let df = DateFormatter()
+            df.dateFormat = "HH:mm:ss"
+            let timestamp = df.string(from: Date())
+            let line = "[\(timestamp)] \(msg)"
+            self.debugLogs.append(line)
+            if self.debugLogs.count > 60 {
                 self.debugLogs.removeFirst()
             }
         }
@@ -36,10 +40,9 @@ class TokenManager: ObservableObject {
             guard self.token != t else { return }
             self.token = t
             self.source = src
-            self.statusText = "Токен успешно получен из \(src)!"
             UIPasteboard.general.string = t
             self.showCopiedBanner = true
-            self.log("ТОКЕН ПОЛУЧЕН (\(src)): \(t.prefix(10))...\(t.suffix(6))")
+            self.log("✅ УСПЕХ! Токен получен (\(src)): \(t.prefix(12))...\(t.suffix(6))")
             
             let generator = UINotificationFeedbackGenerator()
             generator.notificationOccurred(.success)
@@ -57,14 +60,12 @@ class TokenManager: ObservableObject {
 
 struct ContentView: View {
     @StateObject private var tokenManager = TokenManager()
-    @State private var webViewWrapper = WKWebViewWrapper()
     @State private var showDebugSheet = false
     
     var body: some View {
         NavigationView {
             ZStack(alignment: .bottom) {
-                webViewWrapper
-                    .environmentObject(tokenManager)
+                WKWebViewWrapper(tokenManager: tokenManager)
                     .edgesIgnoringSafeArea(.bottom)
                 
                 VStack(spacing: 10) {
@@ -75,7 +76,7 @@ struct ContentView: View {
                                     .foregroundColor(.green)
                                     .font(.title3)
                                 VStack(alignment: .leading, spacing: 2) {
-                                    Text("Токен перехвачен!")
+                                    Text("Токен готов!")
                                         .font(.headline)
                                     Text("Источник: \(tokenManager.source)")
                                         .font(.caption)
@@ -114,7 +115,7 @@ struct ContentView: View {
                         VStack(spacing: 8) {
                             HStack(spacing: 12) {
                                 Button(action: {
-                                    webViewWrapper.manualExtractToken()
+                                    tokenManager.onManualExtract?()
                                 }) {
                                     HStack {
                                         Image(systemName: "key.fill")
@@ -129,7 +130,7 @@ struct ContentView: View {
                                 }
                                 
                                 Button(action: {
-                                    webViewWrapper.reload()
+                                    tokenManager.onReload?()
                                 }) {
                                     Image(systemName: "arrow.clockwise")
                                         .font(.headline)
@@ -151,7 +152,7 @@ struct ContentView: View {
                                 }
                             }
                             
-                            Text("Войдите в Discord. Токен перехватится на лету.")
+                            Text("Войдите в Discord. Токен перехватится автоматически.")
                                 .font(.caption)
                                 .foregroundColor(.secondary)
                         }
@@ -170,10 +171,17 @@ struct ContentView: View {
                 NavigationView {
                     ScrollView {
                         VStack(alignment: .leading, spacing: 6) {
-                            ForEach(tokenManager.debugLogs.indices, id: \.self) { idx in
-                                Text(tokenManager.debugLogs[idx])
-                                    .font(.system(size: 11, design: .monospaced))
-                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            if tokenManager.debugLogs.isEmpty {
+                                Text("Логи еще не поступили. Попробуйте обновить страницу.")
+                                    .foregroundColor(.secondary)
+                                    .font(.subheadline)
+                                    .padding()
+                            } else {
+                                ForEach(tokenManager.debugLogs.indices, id: \.self) { idx in
+                                    Text(tokenManager.debugLogs[idx])
+                                        .font(.system(size: 11, design: .monospaced))
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                }
                             }
                         }
                         .padding()
@@ -201,10 +209,13 @@ struct ContentView: View {
 }
 
 struct WKWebViewWrapper: UIViewRepresentable {
-    private let webView: WKWebView
-    private let coordinator: Coordinator
+    @ObservedObject var tokenManager: TokenManager
     
-    init() {
+    func makeCoordinator() -> Coordinator {
+        Coordinator(tokenManager: tokenManager)
+    }
+    
+    func makeUIView(context: Context) -> WKWebView {
         let contentController = WKUserContentController()
         
         let scriptSource = """
@@ -212,7 +223,7 @@ struct WKWebViewWrapper: UIViewRepresentable {
             function notify(token, source) {
                 if (!token || typeof token !== 'string') return;
                 token = token.trim().replace(/^"|"$/g, '');
-                if (token.length > 25 && (token.includes('.') || token.startsWith('mfa.'))) {
+                if (token.length > 25 && !token.includes(' ') && (token.includes('.') || token.startsWith('mfa.'))) {
                     try {
                         window.webkit.messageHandlers.tokenHandler.postMessage({ token: token, source: source });
                     } catch(e) {}
@@ -221,11 +232,11 @@ struct WKWebViewWrapper: UIViewRepresentable {
 
             function logMsg(msg) {
                 try {
-                    window.webkit.messageHandlers.debugHandler.postMessage(msg);
+                    window.webkit.messageHandlers.debugHandler.postMessage(String(msg));
                 } catch(e) {}
             }
 
-            logMsg("Инжект скрипта выполнен");
+            logMsg("JS: Инжект скрипта выполнен на " + window.location.href);
 
             // 1. Hook XMLHttpRequest.setRequestHeader
             try {
@@ -233,13 +244,14 @@ struct WKWebViewWrapper: UIViewRepresentable {
                 XMLHttpRequest.prototype.setRequestHeader = function(header, value) {
                     try {
                         if (header && typeof header === 'string' && header.toLowerCase() === 'authorization') {
+                            logMsg("JS: XHR нашел Authorization!");
                             notify(value, "XHR Header");
                         }
                     } catch(e) {}
                     return origSetHeader.apply(this, arguments);
                 };
-                logMsg("XHR setRequestHeader перехвачен");
-            } catch(e) { logMsg("Ошибка XHR хука: " + e); }
+                logMsg("JS: XHR hook активен");
+            } catch(e) { logMsg("JS: Ошибка XHR хука: " + e); }
 
             // 2. Hook window.fetch
             try {
@@ -250,10 +262,14 @@ struct WKWebViewWrapper: UIViewRepresentable {
                         if (init && init.headers) {
                             if (init.headers instanceof Headers) {
                                 const auth = init.headers.get('authorization') || init.headers.get('Authorization');
-                                if (auth) notify(auth, "Fetch Header (Headers)");
+                                if (auth) {
+                                    logMsg("JS: Fetch нашел Authorization (Headers)!");
+                                    notify(auth, "Fetch Header (Headers)");
+                                }
                             } else if (typeof init.headers === 'object') {
                                 for (let k in init.headers) {
                                     if (k.toLowerCase() === 'authorization') {
+                                        logMsg("JS: Fetch нашел Authorization (Obj)!");
                                         notify(init.headers[k], "Fetch Header (Obj)");
                                     }
                                 }
@@ -267,14 +283,17 @@ struct WKWebViewWrapper: UIViewRepresentable {
                         if (url && (url.includes('/api/v9/auth/login') || url.includes('/api/v9/auth/mfa/totp'))) {
                             const clone = response.clone();
                             clone.json().then(data => {
-                                if (data && data.token) notify(data.token, "Login Response");
+                                if (data && data.token) {
+                                    logMsg("JS: Ответ логина вернул токен!");
+                                    notify(data.token, "Login Response");
+                                }
                             }).catch(()=>{});
                         }
                     } catch(e) {}
                     return response;
                 };
-                logMsg("Fetch перехвачен");
-            } catch(e) { logMsg("Ошибка Fetch хука: " + e); }
+                logMsg("JS: Fetch hook активен");
+            } catch(e) { logMsg("JS: Ошибка Fetch хука: " + e); }
 
             // 3. Hook WebSocket
             try {
@@ -287,6 +306,7 @@ struct WKWebViewWrapper: UIViewRepresentable {
                             if (typeof data === 'string') {
                                 const parsed = JSON.parse(data);
                                 if (parsed && parsed.d && parsed.d.token) {
+                                    logMsg("JS: WebSocket нашел токен в Gateway!");
                                     notify(parsed.d.token, "Gateway WebSocket");
                                 }
                             }
@@ -295,8 +315,8 @@ struct WKWebViewWrapper: UIViewRepresentable {
                     };
                     return ws;
                 };
-                logMsg("WebSocket перехвачен");
-            } catch(e) { logMsg("Ошибка WS хука: " + e); }
+                logMsg("JS: WebSocket hook активен");
+            } catch(e) { logMsg("JS: Ошибка WS хука: " + e); }
 
             // 4. Function to scan storage
             window.__checkStorageForToken = async function() {
@@ -368,13 +388,14 @@ struct WKWebViewWrapper: UIViewRepresentable {
                     }
                 } catch(e) { results.push("Webpack err"); }
 
-                logMsg("Сканирование: " + results.join(", "));
-                return results.join(", ");
+                let resStr = results.join(" | ");
+                logMsg("JS: Сканирование -> " + resStr);
+                return resStr;
             };
 
             setInterval(() => {
                 if (window.__checkStorageForToken) window.__checkStorageForToken();
-            }, 2000);
+            }, 2500);
         })();
         """
         
@@ -388,61 +409,51 @@ struct WKWebViewWrapper: UIViewRepresentable {
         let wv = WKWebView(frame: .zero, configuration: config)
         wv.customUserAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1"
         
-        self.webView = wv
-        self.coordinator = Coordinator(webView: wv)
-        contentController.add(self.coordinator, name: "tokenHandler")
-        contentController.add(self.coordinator, name: "debugHandler")
-    }
-    
-    func makeCoordinator() -> Coordinator {
-        return coordinator
-    }
-    
-    func makeUIView(context: Context) -> WKWebView {
-        coordinator.tokenManager = context.environment[TokenManagerKey.self]
-        webView.navigationDelegate = coordinator
+        wv.navigationDelegate = context.coordinator
+        context.coordinator.webView = wv
+        contentController.add(context.coordinator, name: "tokenHandler")
+        contentController.add(context.coordinator, name: "debugHandler")
         
-        if let url = URL(string: "https://discord.com/login") {
-            webView.load(URLRequest(url: url))
+        tokenManager.onReload = { [weak wv] in
+            if let url = URL(string: "https://discord.com/login") {
+                wv?.load(URLRequest(url: url))
+            }
         }
-        return webView
-    }
-    
-    func updateUIView(_ uiView: WKWebView, context: Context) {
-        coordinator.tokenManager = context.environment[TokenManagerKey.self]
-    }
-    
-    func reload() {
-        if let url = URL(string: "https://discord.com/login") {
-            webView.load(URLRequest(url: url))
-        }
-    }
-    
-    func manualExtractToken() {
-        coordinator.tokenManager?.log("Нажата кнопка ручного извлечения...")
-        let js = "if (window.__checkStorageForToken) { window.__checkStorageForToken(); } else { 'Скрипт еще не внедрен'; }"
-        webView.evaluateJavaScript(js) { result, error in
-            if let err = error {
-                coordinator.tokenManager?.log("Ошибка вызова JS: \(err.localizedDescription)")
-                coordinator.tokenManager?.showInfo(title: "Ошибка", message: err.localizedDescription)
-            } else if let res = result as? String {
-                coordinator.tokenManager?.log("Результат: \(res)")
-                if coordinator.tokenManager?.token == nil {
-                    coordinator.tokenManager?.showInfo(
-                        title: "Поиск токена",
-                        message: "Проверено: \(res).\nЕсли вы уже вошли, отправьте любое сообщение в чат или перейдите в другой канал, чтобы сработал сетевой перехватчик."
-                    )
+        
+        tokenManager.onManualExtract = { [weak wv, weak tokenManager] in
+            tokenManager?.log("UI: Нажата кнопка ручного извлечения...")
+            let js = "if (window.__checkStorageForToken) { window.__checkStorageForToken(); } else { 'Скрипт еще не внедрен'; }"
+            wv?.evaluateJavaScript(js) { result, error in
+                if let err = error {
+                    tokenManager?.log("UI: Ошибка JS: \(err.localizedDescription)")
+                    tokenManager?.showInfo(title: "Ошибка", message: err.localizedDescription)
+                } else if let res = result as? String {
+                    tokenManager?.log("UI: Результат проверки: \(res)")
+                    if tokenManager?.token == nil {
+                        tokenManager?.showInfo(
+                            title: "Поиск токена",
+                            message: "Результат проверки: \(res).\n\nЕсли вы уже вошли в Discord, просто откройте любой чат или отправьте сообщение — токен перехватится автоматически."
+                        )
+                    }
                 }
             }
         }
+        
+        if let url = URL(string: "https://discord.com/login") {
+            wv.load(URLRequest(url: url))
+        }
+        
+        return wv
     }
+    
+    func updateUIView(_ uiView: WKWebView, context: Context) {}
     
     class Coordinator: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
         weak var webView: WKWebView?
-        var tokenManager: TokenManager?
+        let tokenManager: TokenManager
         
-        init(webView: WKWebView) {
-            self.webView = webView
+        init(tokenManager: TokenManager) {
+            self.tokenManager = tokenManager
         }
         
         func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
@@ -450,32 +461,21 @@ struct WKWebViewWrapper: UIViewRepresentable {
                 if let dict = message.body as? [String: Any],
                    let token = dict["token"] as? String, !token.isEmpty {
                     let source = dict["source"] as? String ?? "Неизвестно"
-                    tokenManager?.setToken(token, from: source)
+                    tokenManager.setToken(token, from: source)
                 } else if let token = message.body as? String, !token.isEmpty {
-                    tokenManager?.setToken(token, from: "Авто")
+                    tokenManager.setToken(token, from: "Авто")
                 }
             } else if message.name == "debugHandler" {
                 if let msg = message.body as? String {
-                    tokenManager?.log(msg)
+                    tokenManager.log(msg)
                 }
             }
         }
         
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-            tokenManager?.log("Страница загружена: \(webView.url?.absoluteString ?? "")")
+            tokenManager.log("WebView: Страница загружена (\(webView.url?.absoluteString ?? ""))")
             let js = "if (window.__checkStorageForToken) { window.__checkStorageForToken(); }"
             webView.evaluateJavaScript(js, completionHandler: nil)
         }
-    }
-}
-
-private struct TokenManagerKey: EnvironmentKey {
-    static let defaultValue: TokenManager? = nil
-}
-
-extension EnvironmentValues {
-    var tokenManager: TokenManager? {
-        get { self[TokenManagerKey.self] }
-        set { self[TokenManagerKey.self] = newValue }
     }
 }

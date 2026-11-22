@@ -52,9 +52,9 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release delete v1.0.1 --yes || true
-          git tag -d v1.0.1 || true
-          gh release create v1.0.1 \
+          gh release delete v1.0.2 --yes || true
+          git tag -d v1.0.2 || true
+          gh release create v1.0.2 \
             DiscordTokenHelper.ipa \
-            --title "Discord Token Helper v1.0.1 (Enhanced Interceptor + Debugger)" \
-            --notes "Обновление: добавлен перехват заголовка Authorization (XHR/Fetch), опрос IndexedDB/localStorage, отладочный лог и информативные уведомления."
+            --title "Discord Token Helper v1.0.2 (Fixed State & Direct Coordinator Wiring)" \
+            --notes "Критическое исправление: прямое связывание TokenManager и Coordinator, устранение потери сообщений в SwiftUI, живой вывод всех сетевых логов в отладчик."
