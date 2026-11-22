@@ -283,7 +283,7 @@ struct WKWebViewWrapper: UIViewRepresentable {
                         return null;
                     })();
                     """
-                    guard let wv = self?.webView else { return }
+                    guard let wv = self.webView else { return }
                     wv.evaluateJavaScript(js) { [weak self] result, _ in
                         if let token = result as? String, !token.isEmpty {
                             self?.tokenManager?.setToken(token)
