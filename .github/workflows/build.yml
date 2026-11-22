@@ -52,9 +52,9 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release delete v1.0.0 --yes || true
-          git tag -d v1.0.0 || true
-          gh release create v1.0.0 \
+          gh release delete v1.0.1 --yes || true
+          git tag -d v1.0.1 || true
+          gh release create v1.0.1 \
             DiscordTokenHelper.ipa \
-            --title "Discord Token Helper v1.0.0" \
-            --notes "iOS приложение для быстрого входа в Discord и удобного копирования токена в буфер обмена."
+            --title "Discord Token Helper v1.0.1 (Enhanced Interceptor + Debugger)" \
+            --notes "Обновление: добавлен перехват заголовка Authorization (XHR/Fetch), опрос IndexedDB/localStorage, отладочный лог и информативные уведомления."
